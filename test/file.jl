@@ -491,6 +491,19 @@ rm(c_tmpdir, recursive=true)
 @test_throws Base._UVError("unlink($(repr(c_tmpdir)))", Base.UV_ENOENT) rm(c_tmpdir, recursive=true)
 @test rm(c_tmpdir, force=true, recursive=true) === nothing
 
+# Some operations can return multiple different error codes depending on the system environment.
+function throws_any_uverror(f::Function, codes...)
+    try
+        f()
+        return false
+    catch e
+        if !isa(e, Base._UVError)
+            return false
+        end
+        return any(e.code .== codes)
+    end
+end
+
 if !Sys.iswindows()
     # chown will give an error if the user does not have permissions to change files
     if get(ENV, "USER", "") == "root" || get(ENV, "HOME", "") == "/root"
@@ -503,8 +516,14 @@ if !Sys.iswindows()
         @test stat(file).gid == 0
         @test stat(file).uid == 0
     else
-        @test_throws Base._UVError("chown($(repr(file)), -2, -1)", Base.UV_EPERM) chown(file, -2, -1)  # Non-root user cannot change ownership to another user
-        @test_throws Base._UVError("chown($(repr(file)), -1, -2)", Base.UV_EPERM) chown(file, -1, -2)  # Non-root user cannot change group to a group they are not a member of (eg: nogroup)
+        # Non-root user cannot change ownership to another user
+        @test throws_any_uverror(Base.UV_EPERM, Base.UV_EINVAL) do
+            chown(file, -2, -1)
+        end
+        # Non-root user cannot change group to a group they are not a member of (eg: nogroup)
+        @test throws_any_uverror(Base.UV_EPERM, Base.UV_EINVAL) do
+            chown(file, -1, -2)
+        end
     end
 else
     # test that chown doesn't cause any errors for Windows
